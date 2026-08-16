@@ -34,7 +34,12 @@ export default function Dashboard({ data }) {
         return (bName === name && bLast === lastName) || bName === name;
       });
 
-      return briefCaseMatch?.Location || record.Location || record.Center || 'Unknown';
+      return record['At which Turn90 Center is the client...'] || 
+             record['At which Turn90 Center is the client currently enrolled?'] ||
+             record['Location'] || 
+             record['Center'] || 
+             briefCaseMatch?.Location || 
+             'Unknown';
     };
 
     const countByLocation = (sheetData) => {
@@ -47,7 +52,6 @@ export default function Dashboard({ data }) {
     };
 
     const locationMetrics = {
-      screenings: countByLocation(sheets.screenings),
       intakes: countByLocation(sheets.intakes),
       enrollments: countByLocation(sheets.enrollments),
       exits: countByLocation(sheets.exits),
@@ -61,17 +65,23 @@ export default function Dashboard({ data }) {
   // Process data for Current 1st Shift
   const currentFirstShiftData = useMemo(() => {
     return sheets.currentFirstShift.map(participant => {
-      const name = (participant['Name'] || participant['First Name'] || '').toString().trim();
+      const first = (participant['First'] || participant['First Name'] || '').toString().trim();
+      const last = (participant['Last'] || participant['Last Name'] || '').toString().trim();
+      const name = `${first} ${last}`.trim();
       
       // Calculate weeks enrolled
-      const startDate = participant['Enrollment start date'] || participant['Start Date'];
+      const startDate = participant['Enrollment Start Date:'] || participant['Enrollment start date'] || participant['Start Date'];
       let weeksEnrolled = 0;
       if (startDate) {
         weeksEnrolled = differenceInWeeks(new Date(), new Date(startDate)) + 1;
       }
 
       // Find points for current active week
-      const pointsRecord = sheets.firstShiftPoints.find(p => (p['Name'] || p['First Name']) === name);
+      const pointsRecord = sheets.firstShiftPoints.find(p => {
+        const pFirst = (p['First'] || p['First Name'] || '').toString().trim();
+        const pLast = (p['Last'] || p['Last Name'] || '').toString().trim();
+        return `${pFirst} ${pLast}`.trim().toLowerCase() === name.toLowerCase();
+      });
       let currentWeekPoints = 0;
       if (pointsRecord) {
          // Assuming the points sheet has columns that are dates or "Week X" mapped to a date
@@ -89,7 +99,11 @@ export default function Dashboard({ data }) {
       }
 
       // Checkboxes: Drug test this week
-      const drugTestRecord = sheets.drugTesting.find(d => (d['Name'] || d['First Name']) === name);
+      const drugTestRecord = sheets.drugTesting.find(d => {
+        const dFirst = (d['First'] || d['First Name'] || '').toString().trim();
+        const dLast = (d['Last'] || d['Last Name'] || '').toString().trim();
+        return `${dFirst} ${dLast}`.trim().toLowerCase() === name.toLowerCase();
+      });
       let drugTestThisWeek = false;
       if (drugTestRecord) {
         for (const [key, value] of Object.entries(drugTestRecord)) {
@@ -100,7 +114,11 @@ export default function Dashboard({ data }) {
       }
 
       // Checkboxes: Case management this week
-      const cmRecord = sheets.caseManagement.find(c => (c['Name'] || c['First Name']) === name);
+      const cmRecord = sheets.caseManagement.find(c => {
+        const cFirst = (c['First'] || c['First Name'] || '').toString().trim();
+        const cLast = (c['Last'] || c['Last Name'] || '').toString().trim();
+        return `${cFirst} ${cLast}`.trim().toLowerCase() === name.toLowerCase();
+      });
       let cmThisWeek = false;
       let recentCMNote = '';
       if (cmRecord) {
@@ -118,20 +136,39 @@ export default function Dashboard({ data }) {
 
       // Historical checkboxes
       const infoComplete = Object.keys(participant).length > 3; // Basic assumption if many fields filled
-      const lscmiRecord = sheets.lscmi.find(l => (l['Name'] || l['First Name']) === name);
+      const lscmiRecord = sheets.lscmi.find(l => {
+        const lFirst = (l['First'] || l['First Name'] || '').toString().trim();
+        const lLast = (l['Last'] || l['Last Name'] || '').toString().trim();
+        return `${lFirst} ${lLast}`.trim().toLowerCase() === name.toLowerCase();
+      });
       const lscmiComplete = !!lscmiRecord;
-      const casePlanComplete = lscmiRecord && (lscmiRecord['Focus Area 1 and 2'] || lscmiRecord['My goal']);
+      const casePlanComplete = lscmiRecord && 
+         (lscmiRecord['Focus Area 1'] && lscmiRecord['Focus Area 2'] && lscmiRecord['My goal while at Turn90 is']);
 
       // Find location
       const briefCaseMatch = briefcase.find(b => (b['First Name'] || '').toString().trim().toLowerCase() === name.toLowerCase());
-      const location = briefCaseMatch?.Location || participant.Location || participant.Center || 'Unknown';
+      const location = participant['At which Turn90 Center is the client...'] || 
+                       participant['At which Turn90 Center is the client currently enrolled?'] ||
+                       participant['Location'] || 
+                       briefCaseMatch?.Location || 
+                       'Unknown';
 
       // Find job checks
-      const jobCheckRecord = sheets.jobChecks.find(j => (j['Name'] || j['First Name']) === name);
+      const jobCheckRecord = sheets.jobChecks.find(j => {
+        const jFirst = (j['First'] || j['First Name'] || '').toString().trim();
+        const jLast = (j['Last'] || j['Last Name'] || '').toString().trim();
+        return `${jFirst} ${jLast}`.trim().toLowerCase() === name.toLowerCase();
+      });
       let jobCheckDaysAgo = 0;
       if (jobCheckRecord && jobCheckRecord['Last Check Date']) {
          jobCheckDaysAgo = differenceInDays(new Date(), new Date(jobCheckRecord['Last Check Date']));
       }
+
+      const briefcaseRecord = briefcase.find(b => {
+        const bName = (b['First Name'] || '').toString().trim().toLowerCase();
+        const bLast = (b['Last Name'] || '').toString().trim().toLowerCase();
+        return (bName === name.toLowerCase().split(' ')[0] && bLast === name.toLowerCase().split(' ')[1]) || bName === name.toLowerCase();
+      });
 
       return {
         name,
@@ -144,7 +181,9 @@ export default function Dashboard({ data }) {
         lscmiComplete,
         casePlanComplete: !!casePlanComplete,
         recentCMNote,
-        jobCheckDaysAgo
+        jobCheckDaysAgo,
+        lscmiRecord,
+        briefcaseRecord
       };
     });
   }, [sheets, briefcase]);
@@ -155,19 +194,54 @@ export default function Dashboard({ data }) {
     
     currentFirstShiftData.forEach(p => {
       const issues = [];
-      if (p.currentWeekPoints < 50) issues.push(`Low points this week (${p.currentWeekPoints}).`); // arbitrary threshold
-      if (!p.infoComplete) issues.push("Missing First Shift Intake info.");
-      if (!p.lscmiComplete) issues.push("LSCMI not completed.");
-      if (!p.casePlanComplete) issues.push("Case Plan not completed.");
-      if (!p.drugTestThisWeek) issues.push("No drug test recorded this week.");
-      if (!p.cmThisWeek) issues.push("No case management recorded this week.");
-      if (p.jobCheckDaysAgo > 30) issues.push(`Job check is overdue (${p.jobCheckDaysAgo} days ago).`);
+      const todos = [];
+
+      // Points and Compliance
+      if (p.currentWeekPoints < 50) issues.push(`Low points this week (${p.currentWeekPoints}).`);
+      if (!p.infoComplete) todos.push("Complete First Shift Intake info.");
+      if (!p.lscmiComplete) todos.push("Complete LSCMI.");
+      if (!p.casePlanComplete) todos.push("Complete Case Plan (Focus Areas and Goal).");
+      if (!p.drugTestThisWeek) todos.push("Administer drug test for this week.");
+      if (!p.cmThisWeek) todos.push("Complete case management meeting for this week.");
+      if (p.jobCheckDaysAgo > 30) todos.push(`Complete Job Check (overdue by ${p.jobCheckDaysAgo - 30} days).`);
+
+      // Briefcase Todos
+      if (p.briefcaseRecord) {
+        if (!p.briefcaseRecord['CS: State ID']) todos.push("Briefcase: Obtain State ID.");
+        if (!p.briefcaseRecord['ER: Resume Completed']) todos.push("Briefcase: Complete Resume.");
+        if (!p.briefcaseRecord['FIN: Bank Account']) todos.push("Briefcase: Open Bank Account.");
+      }
+
+      // CBT with JIC Recommendations based on top LSCMI scores
+      let cbtRecommendations = [];
+      if (p.lscmiRecord) {
+        const domains = [
+          { key: '1.6 Score in Alcohol / Drug Problem (ADP)', topic: 'Substance Abuse & Relapse Prevention' },
+          { key: '1.8 Score in Antisocial Pattern (AP)', topic: 'Antisocial Patterns & Anger Management' },
+          { key: '1.7 Score in Procriminal Attitudes (PA)', topic: 'Procriminal Attitudes & Cognitive Restructuring' },
+          { key: '1.5 Score in Companions (CO)', topic: 'Social Skills & Peer Relationships' },
+          { key: '1.2 Score for Employment / Education (EE)', topic: 'Employment Skills & Problem Solving' },
+          { key: '1.3 Score for Family / Martial (FM)', topic: 'Family Relationships & Conflict Resolution' },
+          { key: '1.4 Score for Leisure / Recreation (LR)', topic: 'Positive Leisure Activities' }
+        ];
+
+        const scores = domains.map(d => ({
+          ...d,
+          score: parseInt(p.lscmiRecord[d.key] || 0, 10)
+        })).sort((a, b) => b.score - a.score);
+
+        // Take top 2 highest scores greater than 0
+        const topScores = scores.filter(s => s.score > 0).slice(0, 2);
+        cbtRecommendations = topScores.map(s => `CBT Focus: ${s.topic} (Score: ${s.score})`);
+      }
       
-      if (issues.length > 0 || p.recentCMNote) {
+      if (issues.length > 0 || todos.length > 0 || p.recentCMNote || cbtRecommendations.length > 0) {
         if (locationFeedback[p.location]) {
           locationFeedback[p.location].push({
             name: p.name,
             issues,
+            todos,
+            cbtRecommendations,
             note: p.recentCMNote
           });
         }
@@ -176,7 +250,9 @@ export default function Dashboard({ data }) {
 
     // Reentry and Aftercare
     const reentryFeedback = sheets.reentryAftercare.map(p => {
-       const name = p['Name'] || p['First Name'] || 'Unknown';
+       const first = (p['First'] || p['First Name'] || '').toString().trim();
+       const last = (p['Last'] || p['Last Name'] || '').toString().trim();
+       const name = `${first} ${last}`.trim() || 'Unknown';
        const note = p['Notes'] || p['Note'] || '';
        return { name, note };
     });
@@ -299,11 +375,35 @@ export default function Dashboard({ data }) {
                     {fb.issues.length > 0 && (
                       <div className="mb-4">
                         <h4 className="text-sm font-medium text-slate-500 uppercase tracking-wider mb-2 flex items-center">
-                          <AlertCircle className="w-4 h-4 mr-1 text-amber-500"/> Action Required
+                          <AlertCircle className="w-4 h-4 mr-1 text-amber-500"/> Issues
                         </h4>
                         <ul className="list-disc list-inside space-y-1">
                           {fb.issues.map((issue, j) => (
                             <li key={j} className="text-sm text-slate-700">{issue}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {fb.todos && fb.todos.length > 0 && (
+                      <div className="mb-4">
+                        <h4 className="text-sm font-medium text-slate-500 uppercase tracking-wider mb-2 flex items-center">
+                          <Check className="w-4 h-4 mr-1 text-blue-500"/> Actionable Todos
+                        </h4>
+                        <ul className="list-disc list-inside space-y-1">
+                          {fb.todos.map((todo, j) => (
+                            <li key={j} className="text-sm text-slate-700">{todo}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {fb.cbtRecommendations && fb.cbtRecommendations.length > 0 && (
+                      <div className="mb-4">
+                        <h4 className="text-sm font-medium text-slate-500 uppercase tracking-wider mb-2 flex items-center">
+                          <AlertCircle className="w-4 h-4 mr-1 text-purple-500"/> CBT with JIC Recommendations
+                        </h4>
+                        <ul className="list-disc list-inside space-y-1">
+                          {fb.cbtRecommendations.map((rec, j) => (
+                            <li key={j} className="text-sm text-slate-700">{rec}</li>
                           ))}
                         </ul>
                       </div>

@@ -25,7 +25,15 @@ export const parseData = async (excelFile, csvFile) => {
       const workbook = XLSX.read(excelBuffer, { type: 'array' });
       
       const readSheet = (name) => {
-        const sheet = workbook.Sheets[name];
+        // Excel truncates sheet names at 31 chars.
+        // We match any sheet that starts with the first 15 chars of the expected name
+        // and also contains "Rows" or just directly match if it's short.
+        const prefix = name.substring(0, 15).toLowerCase();
+        const actualName = workbook.SheetNames.find(sn => 
+          sn.toLowerCase().startsWith(prefix) && sn.includes('Rows')
+        ) || workbook.SheetNames.find(sn => sn.toLowerCase().startsWith(prefix));
+        
+        const sheet = actualName ? workbook.Sheets[actualName] : null;
         return sheet ? XLSX.utils.sheet_to_json(sheet, { defval: '' }) : [];
       };
 
