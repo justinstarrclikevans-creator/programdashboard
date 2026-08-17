@@ -62,6 +62,22 @@ export default function Dashboard({ data }) {
     return { overview, locationMetrics };
   }, [sheets, briefcase]);
 
+  const calculateBriefcaseScore = (record) => {
+    if (!record) return 0;
+    const prefixes = ['CS:', 'LR:', 'ER:', 'HW:', 'FIN:', 'CP:'];
+    let total = 0;
+    let completed = 0;
+    for (const [key, value] of Object.entries(record)) {
+      if (prefixes.some(p => key.startsWith(p))) {
+        total++;
+        if (value && value.toString().trim() !== '' && value.toString().trim() !== 'False') {
+          completed++;
+        }
+      }
+    }
+    return total > 0 ? Math.round((completed / total) * 100) : 0;
+  };
+
   // Process data for Current 1st Shift
   const currentFirstShiftData = useMemo(() => {
     return sheets.currentFirstShift.map(participant => {
@@ -192,9 +208,62 @@ export default function Dashboard({ data }) {
         allNotes,
         jobCheckDaysAgo,
         lscmiRecord,
-        briefcaseRecord
+        briefcaseRecord,
+        briefcaseScore: calculateBriefcaseScore(briefcaseRecord)
       };
     });
+  }, [sheets, briefcase]);
+
+  // Process data for Reentry & Aftercare
+  const reentryParticipants = useMemo(() => {
+     const uniqueNames = new Set();
+     const participants = [];
+     sheets.reentryAftercare.forEach(row => {
+       const first = (row['First'] || row['First Name'] || '').toString().trim();
+       const last = (row['Last'] || row['Last Name'] || '').toString().trim();
+       const name = `${first} ${last}`.trim();
+       if (name && !uniqueNames.has(name.toLowerCase())) {
+          uniqueNames.add(name.toLowerCase());
+          
+          const briefCaseMatch = briefcase.find(b => {
+            const bName = (b['First Name'] || '').toString().trim().toLowerCase();
+            const bLast = (b['Last Name'] || '').toString().trim().toLowerCase();
+            return (bName === name.toLowerCase().split(' ')[0] && bLast === name.toLowerCase().split(' ')[1]) || bName === name.toLowerCase();
+          });
+          
+          const enrollmentMatch = sheets.enrollments.find(e => {
+            const eFirst = (e['First'] || e['First Name'] || '').toString().trim();
+            const eLast = (e['Last'] || e['Last Name'] || '').toString().trim();
+            return `${eFirst} ${eLast}`.trim().toLowerCase() === name.toLowerCase();
+          });
+
+          const location = briefCaseMatch?.Location || enrollmentMatch?.['At which Turn90 Center is the client...'] || enrollmentMatch?.['Location'] || 'Unknown';
+          
+          const lscmiRecord = sheets.lscmi.find(l => {
+            const lFirst = (l['First'] || l['First Name'] || '').toString().trim();
+            const lLast = (l['Last'] || l['Last Name'] || '').toString().trim();
+            return `${lFirst} ${lLast}`.trim().toLowerCase() === name.toLowerCase();
+          });
+
+          const allNotes = sheets.reentryAftercare.filter(c => {
+             const cFirst = (c['First'] || c['First Name'] || '').toString().trim();
+             const cLast = (c['Last'] || c['Last Name'] || '').toString().trim();
+             return `${cFirst} ${cLast}`.trim().toLowerCase() === name.toLowerCase();
+          }).sort((a, b) => new Date(b['Date of activity:'] || 0) - new Date(a['Date of activity:'] || 0))
+            .map(c => c['Notes'] || c['Note'])
+            .filter(Boolean);
+
+          participants.push({
+             name,
+             location,
+             lscmiRecord,
+             briefcaseRecord: briefCaseMatch,
+             briefcaseScore: calculateBriefcaseScore(briefCaseMatch),
+             allNotes
+          });
+       }
+     });
+     return participants;
   }, [sheets, briefcase]);
 
   const feedbackData = useMemo(() => {
@@ -255,6 +324,9 @@ export default function Dashboard({ data }) {
       // Add followups to main todos
       followUpTodos.forEach(f => todos.push(`Follow-up: ${f}`));
 
+      // Briefcase Score
+      const briefcaseScore = p.briefcaseScore || 0;
+
       // CBT with JIC Recommendations based on top LSCMI scores
       let cbtRecommendations = [];
       if (p.lscmiRecord) {
@@ -285,23 +357,87 @@ export default function Dashboard({ data }) {
             issues,
             todos,
             cbtRecommendations,
-            historicalNotes
+            historicalNotes,
+            briefcaseScore: p.briefcaseScore || 0
           });
         }
       }
     });
 
-    // Reentry and Aftercare
-    const reentryFeedback = sheets.reentryAftercare.map(p => {
-       const first = (p['First'] || p['First Name'] || '').toString().trim();
-       const last = (p['Last'] || p['Last Name'] || '').toString().trim();
-       const name = `${first} ${last}`.trim() || 'Unknown';
-       const note = p['Notes'] || p['Note'] || '';
-       return { name, note };
+    // Generate feedback for Reentry and Aftercare
+    const reentryFeedback = [];
+    reentryParticipants.forEach(p => {
+      const todos = [];
+      
+      // Briefcase Todos
+      if (p.briefcaseRecord) {
+        if (!p.briefcaseRecord['CS: State ID']) todos.push("Briefcase: Obtain State ID.");
+        if (!p.briefcaseRecord['ER: Resume Completed']) todos.push("Briefcase: Complete Resume.");
+        if (!p.briefcaseRecord['FIN: Bank Account']) todos.push("Briefcase: Open Bank Account.");
+      }
+
+      // Notes Processing: Historical Context and Actionable Follow-ups
+      const historicalNotes = [];
+      const followUpTodos = [];
+      const keywords = ['apply', 'job', 'referral', 'follow up', 'need', 'must', 'goal', 'plan', 'application', 'interview', 'reach out', 'contact'];
+
+      if (p.allNotes && p.allNotes.length > 0) {
+        const mostRecentNote = p.allNotes[0].trim();
+        if (mostRecentNote) {
+          const sentences = mostRecentNote.match(/[^\.!\?]+[\.!\?]+/g) || [mostRecentNote];
+          historicalNotes.push(sentences.slice(0, 2).join(' ').trim());
+        }
+
+        p.allNotes.forEach(note => {
+          if (!note) return;
+          const sentences = note.match(/[^\.!\?]+[\.!\?]+/g) || [note];
+          sentences.forEach(sentence => {
+            const lowerSentence = sentence.toLowerCase();
+            if (keywords.some(kw => lowerSentence.includes(kw))) {
+              const cleanSentence = sentence.trim();
+              if (!followUpTodos.includes(cleanSentence) && cleanSentence.length > 10) {
+                followUpTodos.push(cleanSentence);
+              }
+            }
+          });
+        });
+      }
+
+      followUpTodos.forEach(f => todos.push(`Follow-up: ${f}`));
+
+      let cbtRecommendations = [];
+      if (p.lscmiRecord) {
+        const domains = [
+          { key: '1.6 Score in Alcohol / Drug Problem (ADP)', topic: 'Substance Abuse & Relapse Prevention' },
+          { key: '1.8 Score in Antisocial Pattern (AP)', topic: 'Antisocial Patterns & Anger Management' },
+          { key: '1.7 Score in Procriminal Attitudes (PA)', topic: 'Procriminal Attitudes & Cognitive Restructuring' },
+          { key: '1.5 Score in Companions (CO)', topic: 'Social Skills & Peer Relationships' },
+          { key: '1.2 Score for Employment / Education (EE)', topic: 'Employment Skills & Problem Solving' },
+          { key: '1.3 Score for Family / Martial (FM)', topic: 'Family Relationships & Conflict Resolution' },
+          { key: '1.4 Score for Leisure / Recreation (LR)', topic: 'Positive Leisure Activities' }
+        ];
+
+        const scores = domains.map(d => ({
+          ...d,
+          score: parseInt(p.lscmiRecord[d.key] || 0, 10)
+        })).sort((a, b) => b.score - a.score);
+
+        const topScores = scores.filter(s => s.score > 0).slice(0, 2);
+        cbtRecommendations = topScores.map(s => `CBT Focus: ${s.topic} (Score: ${s.score})`);
+      }
+      
+      reentryFeedback.push({
+        name: p.name,
+        location: p.location,
+        todos,
+        cbtRecommendations,
+        historicalNotes,
+        briefcaseScore: p.briefcaseScore || 0
+      });
     });
 
     return { locationFeedback, reentryFeedback };
-  }, [currentFirstShiftData, sheets.reentryAftercare]);
+  }, [currentFirstShiftData, reentryParticipants]);
 
   const locations = ['Charleston', 'Columbia', 'Spartanburg'];
   const tabs = ['overview', 'current_first_shift', ...locations.map(l => l.toLowerCase()), 'reentry'];
@@ -414,8 +550,17 @@ export default function Dashboard({ data }) {
               <div className="space-y-4">
                 {feedbackData.locationFeedback[loc]?.length > 0 ? feedbackData.locationFeedback[loc].map((fb, i) => (
                   <div key={i} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-                    <h3 className="text-lg font-semibold text-slate-800 mb-3">{fb.name}</h3>
-                    {fb.issues.length > 0 && (
+                    <div className="flex justify-between items-start mb-3">
+                      <h3 className="text-lg font-semibold text-slate-800">{fb.name}</h3>
+                      <div className="flex flex-col items-end">
+                        <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Briefcase Progress</span>
+                        <div className="w-32 bg-slate-200 rounded-full h-2.5">
+                          <div className="bg-blue-600 h-2.5 rounded-full" style={{ width: `${fb.briefcaseScore}%` }}></div>
+                        </div>
+                        <span className="text-xs font-medium text-slate-600 mt-1">{fb.briefcaseScore}% Complete</span>
+                      </div>
+                    </div>
+                    {fb.issues && fb.issues.length > 0 && (
                       <div className="mb-4">
                         <h4 className="text-sm font-medium text-slate-500 uppercase tracking-wider mb-2 flex items-center">
                           <AlertCircle className="w-4 h-4 mr-1 text-amber-500"/> Issues
@@ -477,11 +622,54 @@ export default function Dashboard({ data }) {
               <div className="space-y-4">
                 {feedbackData.reentryFeedback.length > 0 ? feedbackData.reentryFeedback.map((fb, i) => (
                   <div key={i} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-                    <h3 className="text-lg font-semibold text-slate-800 mb-2">{fb.name}</h3>
-                    <div>
-                      <h4 className="text-sm font-medium text-slate-500 uppercase tracking-wider mb-1">Notes</h4>
-                      <p className="text-sm text-slate-600">{fb.note || 'No notes available.'}</p>
+                    <div className="flex justify-between items-start mb-3">
+                      <div>
+                        <h3 className="text-lg font-semibold text-slate-800">{fb.name}</h3>
+                        <span className="text-xs font-medium text-slate-500 bg-slate-100 px-2 py-1 rounded-full">{fb.location}</span>
+                      </div>
+                      <div className="flex flex-col items-end">
+                        <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Briefcase Progress</span>
+                        <div className="w-32 bg-slate-200 rounded-full h-2.5">
+                          <div className="bg-blue-600 h-2.5 rounded-full" style={{ width: `${fb.briefcaseScore}%` }}></div>
+                        </div>
+                        <span className="text-xs font-medium text-slate-600 mt-1">{fb.briefcaseScore}% Complete</span>
+                      </div>
                     </div>
+
+                    {fb.todos && fb.todos.length > 0 && (
+                      <div className="mb-4">
+                        <h4 className="text-sm font-medium text-slate-500 uppercase tracking-wider mb-2 flex items-center">
+                          <Check className="w-4 h-4 mr-1 text-blue-500"/> Actionable Todos
+                        </h4>
+                        <ul className="list-disc list-inside space-y-1">
+                          {fb.todos.map((todo, j) => (
+                            <li key={j} className="text-sm text-slate-700">{todo}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {fb.cbtRecommendations && fb.cbtRecommendations.length > 0 && (
+                      <div className="mb-4">
+                        <h4 className="text-sm font-medium text-slate-500 uppercase tracking-wider mb-2 flex items-center">
+                          <AlertCircle className="w-4 h-4 mr-1 text-purple-500"/> CBT with JIC Recommendations
+                        </h4>
+                        <ul className="list-disc list-inside space-y-1">
+                          {fb.cbtRecommendations.map((rec, j) => (
+                            <li key={j} className="text-sm text-slate-700">{rec}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {fb.historicalNotes && fb.historicalNotes.length > 0 && (
+                      <div>
+                        <h4 className="text-sm font-medium text-slate-500 uppercase tracking-wider mb-2">Historical Context</h4>
+                        <ul className="list-disc list-inside space-y-1">
+                          {fb.historicalNotes.map((note, j) => (
+                            <li key={j} className="text-sm text-slate-600">{note}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
                   </div>
                 )) : (
                   <div className="bg-white p-8 rounded-xl border border-slate-200 text-center text-slate-500">
