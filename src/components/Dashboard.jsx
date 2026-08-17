@@ -114,25 +114,34 @@ export default function Dashboard({ data }) {
       }
 
       // Checkboxes: Case management this week
-      const cmRecord = sheets.caseManagement.find(c => {
+      const cmRecords = sheets.caseManagement.filter(c => {
         const cFirst = (c['First'] || c['First Name'] || '').toString().trim();
         const cLast = (c['Last'] || c['Last Name'] || '').toString().trim();
         return `${cFirst} ${cLast}`.trim().toLowerCase() === name.toLowerCase();
       });
+      // Sort cmRecords by date descending (assuming 'Date of activity:' exists and is parseable)
+      cmRecords.sort((a, b) => new Date(b['Date of activity:'] || 0) - new Date(a['Date of activity:'] || 0));
+
       let cmThisWeek = false;
-      let recentCMNote = '';
-      if (cmRecord) {
-        for (const [key, value] of Object.entries(cmRecord)) {
-          if (isDateInCurrentActiveWeek(key) || isDateInCurrentActiveWeek(value) || key.toLowerCase().includes('date')) {
-             if (isDateInCurrentActiveWeek(value) || isDateInCurrentActiveWeek(key)) {
-                cmThisWeek = true;
-             }
-             if (value && typeof value === 'string' && value.length > 10) {
-               recentCMNote = value; // capturing note for feedback
-             }
+      const allNotes = [];
+      
+      cmRecords.forEach(c => {
+        for (const [key, value] of Object.entries(c)) {
+          if (value && typeof value === 'string' && value.toLowerCase() === 'first shift') {
+            const dateStr = c['Date of activity:'] || c['Date'];
+            if (dateStr) {
+               const diff = differenceInDays(new Date(), new Date(dateStr));
+               if (diff <= 7) {
+                 cmThisWeek = true;
+               }
+            }
+            break;
           }
         }
-      }
+        if (c['Notes'] || c['Note']) {
+          allNotes.push(c['Notes'] || c['Note']);
+        }
+      });
 
       // Historical checkboxes
       const infoComplete = Object.keys(participant).length > 3; // Basic assumption if many fields filled
@@ -180,7 +189,7 @@ export default function Dashboard({ data }) {
         infoComplete,
         lscmiComplete,
         casePlanComplete: !!casePlanComplete,
-        recentCMNote,
+        allNotes,
         jobCheckDaysAgo,
         lscmiRecord,
         briefcaseRecord
@@ -212,6 +221,40 @@ export default function Dashboard({ data }) {
         if (!p.briefcaseRecord['FIN: Bank Account']) todos.push("Briefcase: Open Bank Account.");
       }
 
+      // Notes Processing: Historical Context and Actionable Follow-ups
+      const historicalNotes = [];
+      const followUpTodos = [];
+      const keywords = ['apply', 'job', 'referral', 'follow up', 'need', 'must', 'goal', 'plan', 'application', 'interview', 'reach out', 'contact'];
+
+      if (p.allNotes && p.allNotes.length > 0) {
+        // Add the most recent note summary to historical context
+        const mostRecentNote = p.allNotes[0].trim();
+        if (mostRecentNote) {
+          // If the note is long, just keep the first two sentences for context
+          const sentences = mostRecentNote.match(/[^\.!\?]+[\.!\?]+/g) || [mostRecentNote];
+          historicalNotes.push(sentences.slice(0, 2).join(' ').trim());
+        }
+
+        // Process all notes for follow-ups
+        p.allNotes.forEach(note => {
+          if (!note) return;
+          const sentences = note.match(/[^\.!\?]+[\.!\?]+/g) || [note];
+          sentences.forEach(sentence => {
+            const lowerSentence = sentence.toLowerCase();
+            if (keywords.some(kw => lowerSentence.includes(kw))) {
+              // Ensure we don't add duplicate sentences
+              const cleanSentence = sentence.trim();
+              if (!followUpTodos.includes(cleanSentence) && cleanSentence.length > 10) {
+                followUpTodos.push(cleanSentence);
+              }
+            }
+          });
+        });
+      }
+
+      // Add followups to main todos
+      followUpTodos.forEach(f => todos.push(`Follow-up: ${f}`));
+
       // CBT with JIC Recommendations based on top LSCMI scores
       let cbtRecommendations = [];
       if (p.lscmiRecord) {
@@ -235,14 +278,14 @@ export default function Dashboard({ data }) {
         cbtRecommendations = topScores.map(s => `CBT Focus: ${s.topic} (Score: ${s.score})`);
       }
       
-      if (issues.length > 0 || todos.length > 0 || p.recentCMNote || cbtRecommendations.length > 0) {
+      if (issues.length > 0 || todos.length > 0 || historicalNotes.length > 0 || cbtRecommendations.length > 0) {
         if (locationFeedback[p.location]) {
           locationFeedback[p.location].push({
             name: p.name,
             issues,
             todos,
             cbtRecommendations,
-            note: p.recentCMNote
+            historicalNotes
           });
         }
       }
@@ -408,10 +451,14 @@ export default function Dashboard({ data }) {
                         </ul>
                       </div>
                     )}
-                    {fb.note && (
+                    {fb.historicalNotes && fb.historicalNotes.length > 0 && (
                       <div>
-                        <h4 className="text-sm font-medium text-slate-500 uppercase tracking-wider mb-2">Recent CM Note</h4>
-                        <p className="text-sm text-slate-600 bg-slate-50 p-3 rounded-md border border-slate-100">{fb.note}</p>
+                        <h4 className="text-sm font-medium text-slate-500 uppercase tracking-wider mb-2">Historical Context</h4>
+                        <ul className="list-disc list-inside space-y-1">
+                          {fb.historicalNotes.map((note, j) => (
+                            <li key={j} className="text-sm text-slate-600">{note}</li>
+                          ))}
+                        </ul>
                       </div>
                     )}
                   </div>
