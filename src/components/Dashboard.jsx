@@ -304,21 +304,23 @@ export default function Dashboard({ data }) {
           historicalNotes.push(sentences.slice(0, 2).join(' ').trim());
         }
 
-        // Process all notes for follow-ups
-        p.allNotes.forEach(note => {
-          if (!note) return;
-          const sentences = note.match(/[^\.!\?]+[\.!\?]+/g) || [note];
+        // Process ONLY the most recent note for follow-ups to avoid stale todos
+        const recentNote = p.allNotes[0];
+        if (recentNote) {
+          const sentences = recentNote.match(/[^\.!\?]+[\.!\?]+/g) || [recentNote];
+          const resolvingKeywords = ['completed', 'done', 'finished', 'submitted', 'already', 'successful', 'received', 'got'];
+          
           sentences.forEach(sentence => {
             const lowerSentence = sentence.toLowerCase();
-            if (keywords.some(kw => lowerSentence.includes(kw))) {
-              // Ensure we don't add duplicate sentences
+            // Check if it has a trigger keyword but NOT a resolving keyword
+            if (keywords.some(kw => lowerSentence.includes(kw)) && !resolvingKeywords.some(rw => lowerSentence.includes(rw))) {
               const cleanSentence = sentence.trim();
               if (!followUpTodos.includes(cleanSentence) && cleanSentence.length > 10) {
                 followUpTodos.push(cleanSentence);
               }
             }
           });
-        });
+        }
       }
 
       // Add followups to main todos
@@ -388,19 +390,21 @@ export default function Dashboard({ data }) {
           historicalNotes.push(sentences.slice(0, 2).join(' ').trim());
         }
 
-        p.allNotes.forEach(note => {
-          if (!note) return;
-          const sentences = note.match(/[^\.!\?]+[\.!\?]+/g) || [note];
+        const recentNote = p.allNotes[0];
+        if (recentNote) {
+          const sentences = recentNote.match(/[^\.!\?]+[\.!\?]+/g) || [recentNote];
+          const resolvingKeywords = ['completed', 'done', 'finished', 'submitted', 'already', 'successful', 'received', 'got'];
+
           sentences.forEach(sentence => {
             const lowerSentence = sentence.toLowerCase();
-            if (keywords.some(kw => lowerSentence.includes(kw))) {
+            if (keywords.some(kw => lowerSentence.includes(kw)) && !resolvingKeywords.some(rw => lowerSentence.includes(rw))) {
               const cleanSentence = sentence.trim();
               if (!followUpTodos.includes(cleanSentence) && cleanSentence.length > 10) {
                 followUpTodos.push(cleanSentence);
               }
             }
           });
-        });
+        }
       }
 
       followUpTodos.forEach(f => todos.push(`Follow-up: ${f}`));
