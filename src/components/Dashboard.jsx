@@ -93,41 +93,32 @@ export default function Dashboard({ data }) {
       }
 
       // Find points for current active week
-      const pointsRecord = sheets.firstShiftPoints.find(p => {
+      const pointsRecords = sheets.firstShiftPoints.filter(p => {
         const pFirst = (p['First'] || p['First Name'] || '').toString().trim();
         const pLast = (p['Last'] || p['Last Name'] || '').toString().trim();
         return `${pFirst} ${pLast}`.trim().toLowerCase() === name.toLowerCase();
       });
       let currentWeekPoints = 0;
-      if (pointsRecord) {
-         // Assuming the points sheet has columns that are dates or "Week X" mapped to a date
-         // Or a single 'Current Week Points' column. If we don't know, we will just try to find a column that is a recent date.
-         // Let's look for any column whose header is a date in the current active week
-         for (const [key, value] of Object.entries(pointsRecord)) {
-           if (isDateInCurrentActiveWeek(key)) {
-             currentWeekPoints = Number(value) || 0;
-           }
-         }
-         // Fallback if there's a generic 'Points' column
-         if (currentWeekPoints === 0 && pointsRecord['Total Points']) {
-            currentWeekPoints = pointsRecord['Total Points']; // Placeholder logic
-         }
-      }
+      pointsRecords.forEach(p => {
+        const dateStr = p['Date'];
+        if (isDateInCurrentActiveWeek(dateStr)) {
+          currentWeekPoints += Number(p['Points']) || 0;
+        }
+      });
 
       // Checkboxes: Drug test this week
-      const drugTestRecord = sheets.drugTesting.find(d => {
+      const drugTestRecords = sheets.drugTesting.filter(d => {
         const dFirst = (d['First'] || d['First Name'] || '').toString().trim();
         const dLast = (d['Last'] || d['Last Name'] || '').toString().trim();
         return `${dFirst} ${dLast}`.trim().toLowerCase() === name.toLowerCase();
       });
       let drugTestThisWeek = false;
-      if (drugTestRecord) {
-        for (const [key, value] of Object.entries(drugTestRecord)) {
-          if (isDateInCurrentActiveWeek(key) || isDateInCurrentActiveWeek(value)) {
-            drugTestThisWeek = true;
-          }
+      drugTestRecords.forEach(d => {
+        const dateStr = d['Date of Test'];
+        if (isDateInCurrentActiveWeek(dateStr)) {
+          drugTestThisWeek = true;
         }
-      }
+      });
 
       // Checkboxes: Case management this week
       const cmRecords = sheets.caseManagement.filter(c => {
@@ -135,24 +126,16 @@ export default function Dashboard({ data }) {
         const cLast = (c['Last'] || c['Last Name'] || '').toString().trim();
         return `${cFirst} ${cLast}`.trim().toLowerCase() === name.toLowerCase();
       });
-      // Sort cmRecords by date descending (assuming 'Date of activity:' exists and is parseable)
+      // Sort cmRecords by date descending
       cmRecords.sort((a, b) => new Date(b['Date of activity:'] || 0) - new Date(a['Date of activity:'] || 0));
 
       let cmThisWeek = false;
       const allNotes = [];
       
       cmRecords.forEach(c => {
-        for (const [key, value] of Object.entries(c)) {
-          if (value && typeof value === 'string' && value.toLowerCase() === 'first shift') {
-            const dateStr = c['Date of activity:'] || c['Date'];
-            if (dateStr) {
-               const diff = differenceInDays(new Date(), new Date(dateStr));
-               if (diff <= 7) {
-                 cmThisWeek = true;
-               }
-            }
-            break;
-          }
+        const dateStr = c['Date of activity:'] || c['Date'];
+        if (isDateInCurrentActiveWeek(dateStr)) {
+          cmThisWeek = true;
         }
         if (c['Notes'] || c['Note']) {
           allNotes.push(c['Notes'] || c['Note']);
