@@ -197,15 +197,55 @@ export default function Dashboard({ data }) {
     });
   }, [sheets, briefcase]);
 
+  const cmNeedsByLocation = useMemo(() => {
+     const needs = { Charleston: 0, Columbia: 0, Spartanburg: 0, Unknown: 0 };
+     currentFirstShiftData.forEach(p => {
+        if (!p.cmThisWeek) {
+           if (needs[p.location] !== undefined) {
+              needs[p.location]++;
+           } else {
+              needs['Unknown']++;
+           }
+        }
+     });
+     return needs;
+  }, [currentFirstShiftData]);
+
+  const overdueJobChecks = useMemo(() => {
+    const latestChecks = {};
+    sheets.jobChecks.forEach(row => {
+      const first = (row['First'] || row['First Name'] || '').toString().trim();
+      const last = (row['Last'] || row['Last Name'] || '').toString().trim();
+      const name = `${first} ${last}`.trim();
+      const dateStr = row['Last Check Date'] || row['Date'] || row['Date of check'] || row['Date of Test'];
+      if (name && dateStr) {
+         const checkDate = new Date(dateStr);
+         if (!isNaN(checkDate)) {
+            if (!latestChecks[name] || checkDate > latestChecks[name].date) {
+               latestChecks[name] = { date: checkDate, daysAgo: differenceInDays(new Date(), checkDate) };
+            }
+         }
+      }
+    });
+    const overdue = [];
+    for (const [name, data] of Object.entries(latestChecks)) {
+       if (data.daysAgo > 30) {
+          overdue.push({ name, daysAgo: data.daysAgo });
+       }
+    }
+    return overdue.sort((a, b) => b.daysAgo - a.daysAgo);
+  }, [sheets.jobChecks]);
+
   // Process data for Reentry & Aftercare
   const reentryParticipants = useMemo(() => {
+     const firstShiftNames = new Set(currentFirstShiftData.map(p => p.name.toLowerCase()));
      const uniqueNames = new Set();
      const participants = [];
      sheets.reentryAftercare.forEach(row => {
        const first = (row['First'] || row['First Name'] || '').toString().trim();
        const last = (row['Last'] || row['Last Name'] || '').toString().trim();
        const name = `${first} ${last}`.trim();
-       if (name && !uniqueNames.has(name.toLowerCase())) {
+       if (name && !uniqueNames.has(name.toLowerCase()) && !firstShiftNames.has(name.toLowerCase())) {
           uniqueNames.add(name.toLowerCase());
           
           const briefCaseMatch = briefcase.find(b => {
@@ -247,7 +287,7 @@ export default function Dashboard({ data }) {
        }
      });
      return participants;
-  }, [sheets, briefcase]);
+  }, [sheets, briefcase, currentFirstShiftData]);
 
   const feedbackData = useMemo(() => {
     // Generate feedback for first shift
@@ -487,6 +527,38 @@ export default function Dashboard({ data }) {
                     </div>
                   </div>
                 ))}
+              </div>
+
+              <div className="mt-10 grid grid-cols-1 lg:grid-cols-2 gap-8">
+                <div className="space-y-4">
+                  <h2 className="text-2xl font-bold text-slate-800">Overdue Job Checks (&gt; 30 Days)</h2>
+                  <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                    <ul className="divide-y divide-slate-200">
+                      {overdueJobChecks.length > 0 ? overdueJobChecks.map((check, i) => (
+                        <li key={i} className="px-6 py-4 flex justify-between items-center hover:bg-slate-50">
+                           <span className="text-sm font-medium text-slate-900">{check.name}</span>
+                           <span className="text-sm font-bold text-red-600 bg-red-50 px-3 py-1 rounded-full">{check.daysAgo} days ago</span>
+                        </li>
+                      )) : (
+                        <li className="px-6 py-8 text-center text-slate-500 text-sm">No overdue job checks.</li>
+                      )}
+                    </ul>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <h2 className="text-2xl font-bold text-slate-800">1st Shift CM Needed (This Week)</h2>
+                  <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                    <ul className="divide-y divide-slate-200">
+                      {['Charleston', 'Columbia', 'Spartanburg'].map(loc => (
+                        <li key={loc} className="px-6 py-4 flex justify-between items-center hover:bg-slate-50">
+                           <span className="text-sm font-medium text-slate-900">{loc}</span>
+                           <span className="text-sm font-bold text-amber-600 bg-amber-50 px-3 py-1 rounded-full">{cmNeedsByLocation[loc] || 0} Participants</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
               </div>
             </div>
           )}
